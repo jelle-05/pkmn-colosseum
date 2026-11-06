@@ -873,7 +873,11 @@ def generate_build_ninja(
 
     # GNU ld, for partial links of modules built with the SN toolchain
     gnu_ld = binutils / f"powerpc-eabi-ld{EXE}"
-    gnu_ld_cmd = f"{gnu_ld} -r -T $ldscript -o $out @$out.rsp"
+    # GNU ld parses @rsp files with backslash escapes, which mangles Windows
+    # paths (build\GC6E01\x.o -> buildGC6E01x.o). On Windows, pass the inputs
+    # on the command line instead; the largest module needs about 2.5 KB.
+    gnu_ld_inputs = "$in" if is_windows() else "@$out.rsp"
+    gnu_ld_cmd = f"{gnu_ld} -r -T $ldscript -o $out {gnu_ld_inputs}"
     gnu_ld_implicit: List[Optional[Path]] = [binutils_implicit or gnu_ld]
 
     if os.name != "nt":
@@ -957,6 +961,11 @@ def generate_build_ninja(
         ("mwcc_extab", mwcc_extab_cmd),
         ("mwcc_sjis_extab", mwcc_sjis_extab_cmd),
     ]:
+        # The post-steps below chain with `&&`, which needs a shell on Windows
+        # (ninja there runs commands without one). The extab variants already
+        # start with CHAIN; add it to the plain mwcc/mwcc_sjis commands.
+        if CHAIN and not command.startswith(CHAIN):
+            command = CHAIN + command
         n.rule(
             name=rule + "_constant_export",
             command=command + f' && $python {constant_export} --objcopy "{gnu_objcopy}"'
